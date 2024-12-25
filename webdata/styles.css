@@ -1,0 +1,41 @@
+td, th { text-align: center; }
+html {
+    background: #123;
+    color: #dee;
+}
+
+td {
+	position: relative;
+}
+
+td > div {
+	position: absolute;
+	height: 100%;
+	z-index: -1;
+}
+
+body.form {
+	width: 50em;
+	background: #234;
+	border: 3px solid #456;
+	margin: 4em auto;
+	padding: 3em 4em;
+}
+
+a {
+	color: inherit;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+td {
+	border-width: 1px;
+	border-color: #0f0;
+}
+
+td.U { border-top-style: solid; }
+td.D { border-bottom-style: solid; }
+td.L { border-left-style: solid; }
+td.R { border-right-style: solid; }

@@ -1,0 +1,18 @@
+Plort Name,Base Value,Default Value,Minimum Value,Maximum Value,Saturation Value
+Pink,7,10,4,23,40
+Rock,15,22,8,50,30
+Phosphor,15,22,8,49,30
+Tabby,15,22,8,50,30
+Rad,30,45,15,99,20
+Honey,30,45,15,98,20
+Boom,30,45,15,98,20
+Puddle,30,45,15,99,20
+Fire,30,45,15,99,20
+Crystal,40,60,21,132,15
+Quantum,40,60,21,130,15
+Dervish,50,75,26,164,12
+Hunter,40,60,20,132,15
+Mosaic,50,75,26,165,12
+Tangle,50,75,25,167,12
+Saber,40,60,20,134,15
+Gold,200,300,102,658,50000
