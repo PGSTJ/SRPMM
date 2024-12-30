@@ -1,5 +1,3 @@
-import matplotlib as plt
-import numpy as np
 import sqlite3 as sl
 import traceback
 import os
@@ -10,26 +8,28 @@ import csv
 import json
 import logging
 import logging.config
+import random
+import pickle as pl
+import datetime
+from dataclasses import dataclass
 
-
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
-from bs4 import BeautifulSoup as bs
+from bs4 import BeautifulSoup as bs, element as bse
+import seaborn
 
 
 BASE_DIR = pathlib.Path(__file__).parent.parent
 
-def process_base_plort_data():
-    def _format_header(names:list[str]):
-        initial = [name.lower().split(' ') for name in names]
-        return [('_').join(i) for i in initial]
-    
-    with open(BASE_DIR / 'plort_base_stats.csv', 'r') as fn:
-        header:list[str] = _format_header(fn.readline().strip().split(','))
-        rdr = csv.DictReader(fn, header)
-        return header, [i for i in rdr]
-    
-BP_COLS, BP_DATA = process_base_plort_data()
-ALL_PLORTS = [data['plort_name'] for data in BP_DATA]
+# modules
+UTILS = BASE_DIR / 'utils'
+MODEL = BASE_DIR / 'model'
+
+# datasets
+REF_DATA_DIR = BASE_DIR / 'reference_data'
+WEB_DATA_DIR = BASE_DIR / 'web_data'
+
 
 
 LOGGING_FILE = BASE_DIR / 'logs.log'
@@ -70,6 +70,3 @@ LOGGING_CONFIG = {
 
 logging.config.dictConfig(LOGGING_CONFIG)
 
-
-if __name__ == "__main__":
-    print(ALL_PLORTS)
