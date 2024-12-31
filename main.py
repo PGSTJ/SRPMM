@@ -3,31 +3,41 @@ import Settings.config as sc
 import utils.session as us
 import utils.research as ur
 
-from model import setup as ms
+# from model import setup as ms
 
-
+file = Settings.WEB_DATA_DIR / 'current_research_2.html'
 
 if __name__ == "__main__":
     data_df = sc.PBS_DATA
     print()
 
-    pp = sc.PreProcessor()
+    pp = sc.HtmlProcessor(html_parser='html5', html_filepath=file)
     # pp.process_html_predictions()  
     # pp.pickle_save()
+    
+    pp.process_html_predictions()
+
+    # pp.pickle_save()
+
+    pp.view_all_results()
+
+    # print(len(d.find_all('tr')))
+
 
     plort = 'Dervish'
+    # print(pp.results['recsales'])
 
-    maf = ms.MarketAnalysisFormatter()
+    # maf = ms.MarketAnalysisFormatter()
     # session = maf.create_plort_recommendations_session(
     #     plort=plort, regression='logistic', iterations=10000, 
     #     window_size=10
     # )
-    maf.gpt_suggestion(plort)
+    # maf.gpt_suggestion(plort)
     
 
 
 
-    period = 10
+    # period = 10
     # combined_df = maf.combine_plort_dfs(plort)
     # maf.extract_local_extremes(plort, period, chunk_review_limit=10)
     # ms.create_basic_plort_plot(combined_df, plort)
