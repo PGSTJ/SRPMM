@@ -18,10 +18,12 @@ if __name__ == "__main__":
     plort = 'Dervish'
 
     maf = ms.MarketAnalysisFormatter()
-    session = maf.create_plort_recommendations_session(
-        plort=plort, regression='logistic', iterations=10000, 
-        window_size=10
-    )
+    # session = maf.create_plort_recommendations_session(
+    #     plort=plort, regression='logistic', iterations=10000, 
+    #     window_size=10
+    # )
+    maf.gpt_suggestion(plort)
+    
 
 
 
@@ -30,8 +32,8 @@ if __name__ == "__main__":
     # maf.extract_local_extremes(plort, period, chunk_review_limit=10)
     # ms.create_basic_plort_plot(combined_df, plort)
     
-    tls, cvls = session.determine_best_poly_features(10)
-    session.dbpf_visualize(tls, cvls)
+    # tls, cvls = session.determine_best_poly_features(10)
+    # session.dbpf_visualize(tls, cvls)
     
     # model,r = session.run_prediction('Training')
     

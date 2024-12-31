@@ -2,8 +2,9 @@ from . import (
     PreProcessor, config,
     seaborn as sns, pd, plt, logging, np, Literal, dataclass,
     train_test_split, mean_squared_error, accuracy_score, log_loss, confusion_matrix, 
-    classification_report, roc_auc_score,
-    LinearRegression, LogisticRegression, StandardScaler, PolynomialFeatures
+    classification_report, roc_auc_score, TimeSeriesSplit, RandomForestClassifier,
+    LinearRegression, LogisticRegression, StandardScaler, PolynomialFeatures,
+    GridSearchCV
 )
 
 logger = logging.getLogger('standard')
@@ -355,9 +356,16 @@ class MarketAnalysisFormatter():
 
         if type == 'SRP':
             c_data['diff'] = c_data['Plort Value'].diff()
-            c_data['local_max'] = (c_data['Plort Value'] > c_data['Plort Value'].shift(1)) & (c_data['Plort Value'] > c_data['Plort Value'].shift(-1))
+            # c_data['local_max'] = (c_data['Plort Value'] > c_data['Plort Value'].shift(1)) & (c_data['Plort Value'] > c_data['Plort Value'].shift(-1))
             c_data['rolling_avg'] = c_data['Plort Value'].rolling(window=window_size).mean()
             c_data['rolling_std'] = c_data['Plort Value'].rolling(window=window_size).std()
+
+            # EMA, RSI, and Bollinger Bands
+            c_data['EMA'] = c_data['Value'].ewm(span=12, adjust=False).mean()
+            c_data['RSI'] = 100 - (100 / (1 + c_data['Plort Value'].diff().clip(lower=0).rolling(window=14).mean() /
+                                        abs(c_data['Plort Value'].diff()).rolling(window=14).mean()))
+            c_data['Upper BB'] = c_data['rolling_avg'] + 2 * c_data['rolling_std']
+            c_data['Lower BB'] = c_data['rolling_avg'] - 2 * c_data['rolling_std']
 
         target_data = c_data[target]
         x = c_data.drop(columns=target)
@@ -467,5 +475,51 @@ class MarketAnalysisFormatter():
             # create_comparison_plort_plot(df, plort)
             print(df)
             return
-    
+
+
+
+
+
+
+
+    def gpt_suggestion(self, plort:str):
+        plort_data_dfs = self.combine_plort_dfs(plort)
+        ds_name = f'{plort.capitalize()} SRP' # Sale Recommendation Prediction
+
+        c_data = plort_data_dfs.copy()
+        c_data['Price Diff'] = c_data['Plort Value'].diff()
+        # c_data['local_max'] = (c_data['Plort Value'] > c_data['Plort Value'].shift(1)) & (c_data['Plort Value'] > c_data['Plort Value'].shift(-1))
+        c_data['rolling_avg'] = c_data['Plort Value'].rolling(window=5).mean()
+        c_data['rolling_std'] = c_data['Plort Value'].rolling(window=5).std()
+
+        # EMA, RSI, and Bollinger Bands
+        c_data['EMA'] = c_data['Plort Value'].ewm(span=12, adjust=False).mean()
+        c_data['RSI'] = 100 - (100 / (1 + c_data['Plort Value'].diff().clip(lower=0).rolling(window=14).mean() /
+                                    abs(c_data['Plort Value'].diff()).rolling(window=14).mean()))
+        c_data['Upper BB'] = c_data['rolling_avg'] + 2 * c_data['rolling_std']
+        c_data['Lower BB'] = c_data['rolling_avg'] - 2 * c_data['rolling_std']
+
+        X_data = c_data[['Plort Value', 'Price Diff', 'rolling_avg', 'RSI', 'Upper BB', 'Lower BB']].dropna()
+        y_data = c_data['Sell'].iloc[X_data.index]
+
+        split = TimeSeriesSplit(n_splits=5)
+        rf = RandomForestClassifier(random_state=42)
+
+        # Hyperparameter tuning
+        param_grid = {
+            'n_estimators': [100, 200],
+            'max_depth': [10, 20],
+        }
+        grid_search = GridSearchCV(rf, param_grid, cv=split, scoring='f1')
+        grid_search.fit(X_data, y_data)
+
+        print("Best Parameters:", grid_search.best_params_)
+        print("\n\nClassification Report:\n", classification_report(y_data, grid_search.best_estimator_.predict(X_data)))
+
+        y_pred = grid_search.best_estimator_.predict(X_data)
+        roc_auc = roc_auc_score(y_data, y_pred)
+
+        print("\n\nROC-AUC:", roc_auc)
+        print("\n\nConfusion Matrix:\n", confusion_matrix(y_data, y_pred))
+        return
 
