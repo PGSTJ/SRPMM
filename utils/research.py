@@ -1,6 +1,6 @@
 from Settings import (
     sl, traceback, math, np,
-    config, logging
+    logging
 )
 
 logger = logging.getLogger('standard')
@@ -83,9 +83,9 @@ def days_while_halved(selling_amount:int, saturation_threshold:int):
     return round(math.log(ratio, 0.75), 0)
 
 
-def market_decay(current_volume:int, days:int=1):
+def market_decay(current_volume:int, days:int=1, *, precision=1) -> float:
     """Base market decay after other multipliers after 1 to x days"""
-    return 0.75^days * current_volume
+    return round(0.75^days * current_volume, precision)
 
 
 def sale_effect(selling_amount:int, saturation_threshold:int, current_price:int) -> int:

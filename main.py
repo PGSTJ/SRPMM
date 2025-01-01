@@ -15,7 +15,7 @@ if __name__ == "__main__":
     # pp.process_html_predictions()  
     # pp.pickle_save(override=True)
     
-
+    print(uhp.create_market_volume_df())
 
     # pp.pickle_save()
 
@@ -31,7 +31,6 @@ if __name__ == "__main__":
 
 
     maf = ms.MarketAnalysisFormatter()
-    print(f'\n\n{maf.html_metadata}')
     # session = maf.start_session(
     #     session_type='PP', x_columns=xcols,
     #     plort=plort, target_column='Sell'

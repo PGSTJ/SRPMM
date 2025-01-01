@@ -1,9 +1,10 @@
 from . import (
     REF_DATA_DIR, WEB_DATA_DIR,
     logging, pd, bs, Literal, bse, pl, dt,
-    os, random
-
+    os, random, np
 )
+
+from .research import market_decay
 
 logger = logging.getLogger('standard')
 
@@ -326,3 +327,19 @@ class HtmlProcessor():
         return 
 
 
+
+def prepare_data():
+    """ Ensures all data is ready for model training """
+    hp = HtmlProcessor()
+    hp.process_html_predictions()
+    hp.pickle_save(override=True)
+
+
+def create_market_volume_df():
+    """ Creates a dataframe tracking market volume data """
+    days = np.arange(1, 1000)
+
+    initial = PBS_DATA['Saturation Value'] / 2
+    init_w_hdrs = {'Day': 1}.update(dict(zip(PBS_DATA['Plort Name'], initial)))
+    return init_w_hdrs
+    

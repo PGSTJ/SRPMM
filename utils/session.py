@@ -1,10 +1,10 @@
 
 from Settings import (
-    np,
-    config
+    np
 )
+from utils import htmlprocessor
 
-logger = config.logger
+logger = htmlprocessor.logger
 
 
 class SessionSave():
@@ -40,7 +40,7 @@ class Session():
     def _init_default(self):
         """ Initialize session with default parameters """
         # 50% of each max / saturation value
-        self.market_volume = np.sum(config.PBS_DATA['Saturation Value'][:-1] / 2)
+        self.market_volume = np.sum(htmlprocessor.PBS_DATA['Saturation Value'][:-1] / 2)
         
 
 
