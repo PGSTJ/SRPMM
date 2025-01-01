@@ -3,19 +3,19 @@ import utils.htmlprocessor as uhp
 import utils.session as us
 import utils.research as ur
 
-# from model import setup as ms
+from model import setup as ms
 
 file = Settings.WEB_DATA_DIR / 'current_research_2.html'
 
 if __name__ == "__main__":
-    data_df = uhp.PBS_DATA
+    pbs_data_df = uhp.PBS_DATA
     print()
 
-    pp = uhp.HtmlProcessor(html_parser='html5', html_filepath=file)
+    pp = uhp.HtmlProcessor(html_parser='html5', html_filepath=file, seed=706271.76)
     # pp.process_html_predictions()  
-    # pp.pickle_save()
+    # pp.pickle_save(override=True)
     
-    pp.process_html_predictions()
+
 
     # pp.pickle_save()
 
@@ -27,13 +27,20 @@ if __name__ == "__main__":
     plort = 'Dervish'
     # print(pp.results['recsales'])
 
-    # maf = ms.MarketAnalysisFormatter()
-    # session = maf.create_plort_recommendations_session(
-    #     plort=plort, regression='logistic', iterations=10000, 
-    #     window_size=10
+    xcols = ['Plort Value']
+
+
+    maf = ms.MarketAnalysisFormatter()
+    print(f'\n\n{maf.html_metadata}')
+    # session = maf.start_session(
+    #     session_type='PP', x_columns=xcols,
+    #     plort=plort, target_column='Sell'
     # )
-    # maf.gpt_suggestion(plort)
-    
+    # set_type = 'Training'
+    # session.run_model(
+    #     set_type=set_type,
+    # )    
+    # session.get_results(set_type)
 
 
 

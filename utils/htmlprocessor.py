@@ -76,6 +76,14 @@ class HtmlProcessor():
         
         self.GAME_SEED = seed
 
+        self.metadata = {
+            'Seed': self.GAME_SEED,
+            'Parser': self.html_parser,
+            'File': self.html_file, # TODO only matters for dev/debugging purposes, if even that
+            'Pickle Version': self.pickle_version
+        }
+
+
     @staticmethod
     def create_soup(filepath:str, parser:Literal['html', 'lxml-html', 'lxml-xml', 'html5']) -> bs: 
         """ soupifies a file """
@@ -177,6 +185,8 @@ class HtmlProcessor():
         # logger.debug('Converted all extracted HTML data into dataframes')
         
         assert self.results['plain'].shape and self.results['perc best'].shape == (999,19), f'Incorrectly stitched dataframe(s). Expected shape (999,19) but got shapes plain: {self.results['plain'].shape} perc best: {self.results['perc best'].shape}'
+
+        self.metadata['Results'] = self.results
         
         print('done processing')
         logger.info(f'Finished processing HTML data. Results:\n\n{self._log_processing_results()}')
@@ -259,7 +269,7 @@ class HtmlProcessor():
                 os.remove(os.path.join(REF_DATA_DIR, file))
 
         with open(self.pickle_file, 'wb') as fn:
-            pl.dump(self.results, fn)
+            pl.dump(self.metadata, fn)
             logger.info(f'Saved procesing results to pickle file: {self.pickle_file}')
         print(f'Saved results to {self.pickle_file}')
         return

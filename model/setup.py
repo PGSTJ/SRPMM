@@ -1,15 +1,15 @@
 from . import (
-    PreProcessor, config,
-    seaborn as sns, pd, plt, logging, np, Literal, dataclass,
+    HtmlProcessor, seaborn as sns, pd, plt, logging, np, Literal, dataclass,
     train_test_split, mean_squared_error, accuracy_score, log_loss, confusion_matrix, 
+    mean_absolute_error, r2_score,
     classification_report, roc_auc_score, TimeSeriesSplit, RandomForestClassifier,
     LinearRegression, LogisticRegression, StandardScaler, PolynomialFeatures,
-    GridSearchCV
+    GridSearchCV, GradientBoostingRegressor
 )
 
 logger = logging.getLogger('standard')
 
-ALL_DATA_DF:dict[str,pd.DataFrame] = PreProcessor().pickle_load()
+SAVE_METADATA:dict[str,any] = HtmlProcessor().pickle_load()
 
 def create_pair_plot(dataframe:pd.DataFrame):
 
@@ -93,31 +93,44 @@ class MarketAnalysisSession():
             Currently only allows a dict with set keys referring to training/test/cv subdatasets 
             of the given session 
 
+        model_type : Literal['randomforest', 'xgb']
+            Choose the model type 
+
+            
+    Args
+    ----
+        iterations : int, default=None
+            Only required when regression is set to 'logistic'
+
     
     """
     def __init__(
             self, 
             session_name:str, 
             session_data:dict[Literal['Training', 'Test', 'CV'], MADataset],
-            regression:Literal['linear', 'logistic'],
-            iterations:int=None
-    ):
+            model_type:Literal['randomforest', 'xgb'],
+            ):
         self.name = session_name
         self.session_data:dict[Literal['Training', 'Test', 'CV'], MADataset] = session_data
         
+        self.model = None
         self.model_parameters = {
-            'reg': regression,
-            'iters': iterations
+            'model': model_type,
+            'param_grid' : '',
+            'gscv_scoring': ''
         }
 
         self.scaler = StandardScaler()
 
-        self.session_metadata:dict[str,dict[str,any]] = {}
+        self.session_metadata:dict[str,dict[str,any]] = {
+            'Training': {'Results': {}, 'Metrics': {}},
+            'Test': {'Results': {}, 'Metrics': {}},
+            'CV': {'Results': {}, 'Metrics': {}}
+        }
 
-    def _model(
+    def _get_model(
             self,
-            regression:Literal['linear', 'logistic'],
-            iterations:int=None
+            model_type:Literal['rfclassifier', 'xgb'],
             ):
         """ Regression model 
         
@@ -133,102 +146,85 @@ class MarketAnalysisSession():
         
         """
 
-        if regression == 'linear':
-            model = LinearRegression()
-        elif regression == 'logistic':
-            model = LogisticRegression(
-                max_iter=iterations,
-                # penalty='elasticnet',
-                solver='liblinear',
-                random_state=1
-            )
-        else:
-            raise ValueError(f'Must specify regression type as Linear or Logistic, not', regression)
-        logger.info(f'{type(model)} model initialized')
+        if model_type == 'rfclassifier':
+            model = RandomForestClassifier(random_state=42)
+            self.model_parameters['param_grid'] = {
+                'n_estimators': [100, 200],
+                'max_depth': [10, 20],
+            }
+            self.model_parameters['gscv_scoring'] = 'f1'
 
-        # plot_data_results(x=X, type='pre', y=y, title='Pre Normalization')
+        elif model_type == 'xgb':
+            model = GradientBoostingRegressor()
+            self.model_parameters['param_grid'] = {
+                "n_estimators": [100, 200],
+                "learning_rate": [0.01, 0.1],
+                "max_depth": [3, 5]
+            }
+            self.model_parameters['gscv_scoring'] = 'neg_mean_absolute_error'
+
+        else:
+            raise ValueError(f'Unrecognized model type. Expected: {['rfclassifier', 'xgb']} Got: {model_type}')
+        logger.info(f'{type(model)} model initialized')
 
         return model
 
-    # TODO might deprecate
-    def set_iterations(self, amount:int):
-        original_length = self.model_parameters['iters'] if self.model_parameters['iters'] is not None else 100
-        self.model_parameters['iters'] = amount
-        logger.info(f'Updated iteration length for Session: {self.name} from {original_length} to {amount}')
-
     # first iteration
-    def run_prediction(self, set_type:Literal['Training', 'Test', 'CV']):
-        model = self._model(self.model_parameters['reg'], iterations=self.model_parameters['iters'])
-        dataset = self._check_nans(self.session_data[set_type], set_type)
+    def run_model(
+            self, 
+            set_type:Literal['Training', 'Test', 'CV'],
+            timeseries_n_splits:int = 5
+            ):
+        """ Runs model starting 
+        
+        Parameters
+        ----------
+            set_type : Literal['Training', 'Test', 'CV']
+                Specify type of model run
+
+            timeseries_n_splits : int, default=5
+                Number of splits passed into the ```TimeSeriesSplit``` object
+        
+        """
+        self.model = self._get_model(self.model_parameters['model'])
+        dataset = self.session_data[set_type]
         logger.debug(f'Training columns: {dataset.X_data.columns}')
         self.session_metadata[set_type]['Warnings'] = {}
+
+        split = TimeSeriesSplit(n_splits=timeseries_n_splits)
         
-        X_norm = self.scaler.fit_transform(dataset.X_data)
-        self.session_metadata[set_type] = {'Normalized Data': X_norm}
+        grid_search = GridSearchCV(estimator=self.model, param_grid=self.model_parameters['param_grid'], cv=split, scoring=self.model_parameters['gscv_scoring'])
+        grid_search.fit(dataset.X_data, dataset.y_data)
 
+        best_model = grid_search.best_estimator_.fit(dataset.X_data, dataset.y_data)
+        y_pred = best_model.predict(dataset.X_data)
+        y_proba = best_model.predict_proba(dataset.X_data)
 
-        assert len(X_norm) == len(dataset.y_data), f'X and y length mismatch: x: {len(X_norm)} | y: {len(dataset.y_data)}\nRecheck NA cleaning.'
-        # return dataset.y_data
-        
-        model.fit(X_norm, dataset.y_data)
-        y_pred = model.predict(X_norm)
-        y_proba = model.predict_proba(X_norm)
-
+        logger.info("Best Parameters:", grid_search.best_params_)
+        self.session_metadata[set_type]['Best Model Parameters'] = grid_search.best_params_
 
         self.session_metadata[set_type]['Results'] = {
             'Predictions':y_pred, 
             'Prediction Probabilities':y_proba, 
-            'Accuracy': model.score(X_norm,dataset.y_data),
-            'AUROC': roc_auc_score(dataset.y_data, y_proba[:, 1])
+            'Accuracy': best_model.score(dataset.X_data,dataset.y_data),
             }
-        logger.debug(self.session_metadata)
-        # print(classification_report(dataset.y_data, y_pred))
-        return model
-    
-    def _check_nans(self, original_data:MADataset, set_type):
-        """ Documents raw values where normalized versions are NaN """
-        header = original_data.X_data.columns
-        clean_df = original_data.X_data.dropna()
-
-        list_all = original_data.X_data.to_dict(orient='index')
-        no_nas = clean_df.to_dict(orient='index')
-
-        # return list_all, no_nas
-
-        if len(list_all) != len(no_nas):
-            dd = {idx:list_all[idx] for idx in list_all if idx not in no_nas}
-            dropped_f = {'indexes':[i for i in dd], 'og_values':[dd[i] for i in dd]}
-            self.session_metadata[set_type]['Warnings']['Dropped Data'] = dropped_f
-            logger.warning(f'Removed rows with NaN values: {dd}')
-
         
-
-        if len(original_data.y_data) != len(clean_df):
-            yd = original_data.y_data.to_list()
-            for idx in self.session_metadata[set_type]['Warnings']['Dropped Data']['indexes']:
-                yd.remove(yd[idx])
-                    
-            
-            original_data.y_data = pd.Series(yd)
-        original_data.X_data = clean_df
-        
-
-        return original_data
-
-        
+        # logger.debug(self.session_metadata)
+        return      
 
     
     def get_results(self, set_type:Literal['Training', 'Test', 'CV']) -> np.ndarray:
         print(f'{set_type} Accuracy (score): ', self.session_metadata[set_type]['Results']['Accuracy'])
 
-        acc,loss,cm = self._calculate_metrics(set_type)
+        print('Results:\n')
+        for result in self.session_metadata[set_type]['Results']:
+            print(f'{result}: {self.session_metadata[set_type]["Results"][result]}')
 
-        print(
-            f'Metrics:\n',
-            f'\tAccuracy (acc_score): {acc}\n',
-            f'\tLog Loss: {loss}\n',
-            f'\tConfusion Matrix: {cm}\n',
-        )
+        print('Metrics:\n')
+        self._calculate_metrics(set_type)
+        for metric in self.session_metadata[set_type]['Metrics']:
+            print(f'{metric}: {self.session_metadata[set_type]["Metrics"][metric]}')
+
 
         if len(self.session_metadata[set_type]['Warnings']) > 0:
             print(self.session_metadata[set_type]['Warnings'])
@@ -241,10 +237,20 @@ class MarketAnalysisSession():
         proba_y = self.session_metadata[set_type]['Results']['Prediction Probabilities']
         
         accuracy = accuracy_score(true_y, pred_y)
-        loss = log_loss(true_y, proba_y)
-        cm = confusion_matrix(true_y, pred_y)
+        self.session_metadata[set_type]['Metrics'] = {'Accuracy': accuracy}
 
-        return accuracy,loss,cm
+        if isinstance(self.model, RandomForestClassifier):
+            self.session_metadata[set_type]['Metrics']['Loss'] = log_loss(true_y, proba_y)
+            self.session_metadata[set_type]['Metrics']['Confusion Matrix'] = confusion_matrix(true_y, pred_y)
+            self.session_metadata[set_type]['Metrics']['Classification Report'] = classification_report(true_y, pred_y)
+            self.session_metadata[set_type]['Metrics']['AUC'] = roc_auc_score(true_y, pred_y)
+
+        elif isinstance(self.model, GradientBoostingRegressor):
+            self.session_metadata[set_type]['Metrics']['Loss'] = mean_squared_error(true_y, pred_y)
+            self.session_metadata[set_type]['Metrics']['MAE'] = mean_absolute_error(true_y, pred_y)
+            self.session_metadata[set_type]['Metrics']['R2'] = r2_score(true_y, pred_y)
+
+        return 
 
 
     def determine_best_poly_features(self, max_degree:int):
@@ -315,21 +321,21 @@ class MarketAnalysisFormatter():
 
     def __init__(self):
         logger.info('Initializing MA Formatter')
-        for result in ALL_DATA_DF:
-            self.__dict__[result] = ALL_DATA_DF[result].copy()
-            logger.info(f'Added result data parameter: {result}')
-
+        self.data:dict[Literal['plain', 'perc best', 'recsales'], pd.DataFrame] = SAVE_METADATA['Results']
+        self.html_metadata = {i:SAVE_METADATA[i] for i in SAVE_METADATA if i != 'Results'}
 
     def create_datasets(
             self,
             dataset_name:str,
             data:pd.DataFrame,
-            target:str=None,
-            *,
-            window_size:int,
-            type:Literal['SRP']=None
+            type:Literal['PR', 'PP'],
+            x_columns:list[str],
+            target:str,
+            training_size:float = 0.5
             ) -> dict[Literal['Training', 'Test', 'CV'], MADataset]:
         """ Creates a dataset for model training/testing/CVing
+
+        Depending on session type, will engineer certain features and append to the supplied dataframe
 
         Parameters
         ----------
@@ -342,7 +348,9 @@ class MarketAnalysisFormatter():
             target : str, default=None
                 Corresponds to the column label that represents the target data. Not required for linear regression
 
-            type : Literal['SRP']
+        Args
+        ----
+            type : Literal['PR', 'PP']
                 Specifies model purpose type
 
                 - SRP: Sale Recommendation Predictor. Requires window_size to be supplied.
@@ -354,74 +362,110 @@ class MarketAnalysisFormatter():
         c_data = data.copy()
         assert target in c_data.columns.to_list(), f'Selected target: {target} does not exist in dataset. Dataset columns: {c_data.columns}'
 
+        # TODO put engineered features in own functions
         if type == 'SRP':
-            c_data['diff'] = c_data['Plort Value'].diff()
+            c_data['Price Diff'] = c_data['Plort Value'].diff()
             # c_data['local_max'] = (c_data['Plort Value'] > c_data['Plort Value'].shift(1)) & (c_data['Plort Value'] > c_data['Plort Value'].shift(-1))
-            c_data['rolling_avg'] = c_data['Plort Value'].rolling(window=window_size).mean()
-            c_data['rolling_std'] = c_data['Plort Value'].rolling(window=window_size).std()
+            c_data['rolling_avg'] = c_data['Plort Value'].rolling(window=5).mean()
+            c_data['rolling_std'] = c_data['Plort Value'].rolling(window=5).std()
 
             # EMA, RSI, and Bollinger Bands
-            c_data['EMA'] = c_data['Value'].ewm(span=12, adjust=False).mean()
+            c_data['EMA'] = c_data['Plort Value'].ewm(span=12, adjust=False).mean()
             c_data['RSI'] = 100 - (100 / (1 + c_data['Plort Value'].diff().clip(lower=0).rolling(window=14).mean() /
                                         abs(c_data['Plort Value'].diff()).rolling(window=14).mean()))
             c_data['Upper BB'] = c_data['rolling_avg'] + 2 * c_data['rolling_std']
             c_data['Lower BB'] = c_data['rolling_avg'] - 2 * c_data['rolling_std']
 
-        target_data = c_data[target]
-        x = c_data.drop(columns=target)
+            fe_columns = ['Price Diff', 'rolling_avg', 'rolling_std', 'EMA', 'RSI', 'Upper BB', 'Lower BB']
+            x_columns += fe_columns
 
-        X_train, x_, y_train, y_ = train_test_split(x, target_data, test_size=0.6, random_state=1)
-        X_cv, x_test, y_cv, y_test = train_test_split(x_, y_, test_size=0.5, random_state=1)
-
-        del x_,y_
-
-        return {
-            'Training': MADataset(name=dataset_name,X_data=X_train, y_data=y_train),
-            'Test': MADataset(name=dataset_name,X_data=x_test, y_data=y_test),
-            'CV': MADataset(name=dataset_name,X_data=X_cv, y_data=y_cv)
-        }
-        
-    def create_plort_recommendations_session(
-            self, 
-            plort:str, 
-            regression:Literal['linear', 'logistic'],
-            iterations:int=100, # TODO likely a better place for iteration and regression definition
-            remove_columns:list[str]|str='Day',
-            *,
-            window_size:int
+        elif type == 'PP':
+            c_data["rolling_avg"] = c_data["Plort Value"].rolling(window=7).mean()
+            c_data["rolling_std"] = c_data["Plort Value"].rolling(window=7).std()
             
-    ) -> MarketAnalysisSession:
-        """ Creates dataset for learning plort sale recommendations and a new Session """ # TODO account for exising sessions?
-        plort_data_dfs = self.combine_plort_dfs(plort)
-        ds_name = f'{plort.capitalize()} SRP' # Sale Recommendation Prediction
-        
-        plort_data_dfs_clean = plort_data_dfs.drop(columns=remove_columns)
+            # RSI - by parts
+            delta = c_data["Plort Value"].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            c_data["RSI"] = 100 - (100 / (1 + (gain / loss)))
+            
+            # Fourier features for seasonality
+            c_data["sin_day"] = np.sin(2 * np.pi * c_data["Day"] / 150) # TODO alter "total days" in year, currently 150
+            c_data["cos_day"] = np.cos(2 * np.pi * c_data["Day"] / 150)
+            
+            # Saturation multiplier approximation TODO fix saturation multiplier
+            # c_data["Saturation_Multiplier"] = 1 + (1 - np.minimum(c_data["Value"], metadata["Saturation_Threshold"]) / metadata["Saturation_Threshold"])
 
+            fe_columns = ["rolling_avg", "rolling_std", "RSI", "sin_day", "cos_day", "Saturation_Multiplier"]
+            x_columns += fe_columns
+
+        X_data = c_data[x_columns].dropna()
+        y_data = c_data[target]
+
+        split_data = self.split_data_temporally(X_data, y_data, training_size=training_size)
+        return {set:MADataset(name=dataset_name, X_data=split_data[set][0], y_data=split_data[set][1]) for set in split_data}
         
+    def start_session(
+            self, 
+            session_type:Literal['PR', 'PP'],
+            x_columns:list[str],
+            plort:str=None, 
+            target_column:str=None
+            ):
+        """ Formats data for specified session type then returns a Session
+        
+        Parameters
+        ----------              
+            session_type : Literal['PR', 'PP']
+                Indicates the type of training session to format data for
+
+                - 'PR' : Plort Recommendation; Prepares session to train a model on recommended sale data to predict recommended sale days
+                - 'PP' : Price Prediction; Prepares a session to train a model on sell value trends to predict future prices
+
+            x_columns : list[str]
+                List of column names to use in training (raw HTML data only - engineered features are automatically created)
+
+            target_column : str, default=None
+                For classification tasks only. Refers to the column containing target for classification
+            
+            
+            plort : str, default=None
+                Specifies the specific plorts' trend to learn
+        
+        """
+        if plort:
+            combined_raw_df = self.combine_plort_dfs(plort)
+            ds_name = f'{plort.capitalize()} {session_type}' # Sale Recommendation Prediction
+        else:
+            combined_raw_df = self.combine_market_df()
+            ds_name = f'Market {session_type}'
+        
+
         try:
-            datasets = self.create_datasets(dataset_name=ds_name, data=plort_data_dfs_clean, target='Sell', type='SRP', window_size=window_size)
+            datasets = self.create_datasets(dataset_name=ds_name, data=combined_raw_df, x_columns=x_columns, target=target_column, type=session_type)
         except KeyError as e:
-            logger.error(f'KeyError: {e} | {plort_data_dfs_clean.columns}')
+            logger.error(f'KeyError: {e} | {combined_raw_df.columns}')
             raise KeyError(e)
-        except Exception as e:
-            logger.error(f'{ds_name} - {plort_data_dfs_clean = }')
-            raise e
+        
         
         return MarketAnalysisSession(
-            session_name=f'{plort} Analysis', 
+            session_name=ds_name, 
             session_data=datasets,
-            regression=regression,
-            iterations=iterations
+            model_type='rfclassifier'
         )
 
     def combine_plort_dfs(self, plort:str) -> pd.DataFrame: # USED FOR LOGISTIC REGRESSION
-        """ Combines the price and percentage best values for the given plort along as well as whether it was a recommended sale """
+        """ Combines the price and percentage best values for the given plort along as well as whether it was a recommended sale 
+        
+        Returns DF with shape (999,4)
+        
+        """
         days = np.arange(start=1,stop=1000) # TODO generalize in class after moving past initial static predictions
-        plort_recsales = self.recsales[self.recsales['plort']==plort.capitalize()] 
+        plort_recsales = self.data['recsales'][self.data['recsales']['Plort']==plort.capitalize()] 
 
-        plort_value = self.plain[plort.capitalize()]
-        percetange_best = self.stdev[plort.capitalize()]
-        days_recommended_sale:list[bool] = [1 if day in plort_recsales['day'].tolist() else 0 for day in days] # target array
+        plort_value = self.data['plain'][plort.capitalize()]
+        percetange_best = self.data['perc best'][plort.capitalize()]
+        days_recommended_sale:list[bool] = [1 if day in plort_recsales['Day'].tolist() else 0 for day in days] # target array
 
         combined_data = {
                 'Day': days,
@@ -435,10 +479,14 @@ class MarketAnalysisFormatter():
         return pd.DataFrame(data=combined_data)
 
     def combine_market_df(self) -> pd.DataFrame: # USED FOR LINEAR REGRESSION
-        """ Combines the market price and best values """
+        """ Combines the market price and best values 
+        
+        Returns DF with shape (999,3)
+        
+        """
 
-        market_value_days = ALL_DATA_DF['plain'][['Day','Market']] # first two columns
-        market_percentage_best = ALL_DATA_DF['stdev']['Market']
+        market_value_days = self.data['plain'][['Day','Market']] # first two columns
+        market_percentage_best = self.data['perc best']['Market']
 
         market_value_days.insert(len(market_value_days.columns), 'Market Percentage Best', market_percentage_best) # third column
         # TODO rename 'Market' column from original DF to 'Market Value'
@@ -478,48 +526,39 @@ class MarketAnalysisFormatter():
 
 
 
+    def split_data_temporally(self, xdata:pd.DataFrame, ydata:pd.Series, training_size:float=0.5):
+        """ Splits data into training/test/CV based on training size percentage """
 
+        assert len(xdata) == len(ydata), f'Unable to split data due to mismatching data lengths - x: {len(xdata)} | y: {len(ydata)}'
+        train_index_split = int(round(training_size * len(xdata), 0))
+        cv_test_size = int(round((training_size / 2) * len(xdata), 0))
+        
+        cv_index_range = (train_index_split, int(train_index_split+cv_test_size))
+        test_index_range = int(train_index_split+cv_test_size)
 
+        train_x = xdata.iloc[:train_index_split]
+        train_y = ydata.iloc[:train_index_split]
+        logger.info(f'train: {train_x.shape}\n{train_x}\n')
 
+        cv_x = xdata.iloc[train_index_split:cv_index_range[1]]
+        cv_y = ydata.iloc[train_index_split:cv_index_range[1]]
+        logger.info(f'cv: {cv_x.shape}\n{cv_x}\n')
 
-    def gpt_suggestion(self, plort:str):
-        plort_data_dfs = self.combine_plort_dfs(plort)
-        ds_name = f'{plort.capitalize()} SRP' # Sale Recommendation Prediction
+        test_x = xdata.iloc[test_index_range:]
+        test_y = ydata.iloc[test_index_range:]
+        logger.info(f'test: {test_x.shape}\n{test_x}\n')
 
-        c_data = plort_data_dfs.copy()
-        c_data['Price Diff'] = c_data['Plort Value'].diff()
-        # c_data['local_max'] = (c_data['Plort Value'] > c_data['Plort Value'].shift(1)) & (c_data['Plort Value'] > c_data['Plort Value'].shift(-1))
-        c_data['rolling_avg'] = c_data['Plort Value'].rolling(window=5).mean()
-        c_data['rolling_std'] = c_data['Plort Value'].rolling(window=5).std()
-
-        # EMA, RSI, and Bollinger Bands
-        c_data['EMA'] = c_data['Plort Value'].ewm(span=12, adjust=False).mean()
-        c_data['RSI'] = 100 - (100 / (1 + c_data['Plort Value'].diff().clip(lower=0).rolling(window=14).mean() /
-                                    abs(c_data['Plort Value'].diff()).rolling(window=14).mean()))
-        c_data['Upper BB'] = c_data['rolling_avg'] + 2 * c_data['rolling_std']
-        c_data['Lower BB'] = c_data['rolling_avg'] - 2 * c_data['rolling_std']
-
-        X_data = c_data[['Plort Value', 'Price Diff', 'rolling_avg', 'RSI', 'Upper BB', 'Lower BB']].dropna()
-        y_data = c_data['Sell'].iloc[X_data.index]
-
-        split = TimeSeriesSplit(n_splits=5)
-        rf = RandomForestClassifier(random_state=42)
-
-        # Hyperparameter tuning
-        param_grid = {
-            'n_estimators': [100, 200],
-            'max_depth': [10, 20],
+        return {
+            'Training': (train_x, train_y),
+            'CV': (cv_x, cv_y),
+            'Test': (test_x, test_y)
         }
-        grid_search = GridSearchCV(rf, param_grid, cv=split, scoring='f1')
-        grid_search.fit(X_data, y_data)
 
-        print("Best Parameters:", grid_search.best_params_)
-        print("\n\nClassification Report:\n", classification_report(y_data, grid_search.best_estimator_.predict(X_data)))
-
-        y_pred = grid_search.best_estimator_.predict(X_data)
-        roc_auc = roc_auc_score(y_data, y_pred)
-
-        print("\n\nROC-AUC:", roc_auc)
-        print("\n\nConfusion Matrix:\n", confusion_matrix(y_data, y_pred))
+        # print(
+        #     f'index 0 -> {train_index_split = }\n'
+        #     f'{cv_test_size = }\n'
+        #     f'cv index range - {train_index_split} : {cv_index_range}\n'
+        #     f'{test_index_range = } until end\n'
+        # )
         return
 
