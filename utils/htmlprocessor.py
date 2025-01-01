@@ -1,7 +1,7 @@
 from . import (
     REF_DATA_DIR, WEB_DATA_DIR,
-    logging, pd, bs, Literal, bse, pl, datetime as dt, plt, math,
-    os, random, dataclass, field
+    logging, pd, bs, Literal, bse, pl, dt,
+    os, random
 
 )
 
@@ -13,7 +13,7 @@ PBS_DATA = pd.read_csv(REF_DATA_DIR/ f'{DEFAULT_PBS_NAME}.csv')
 
 CURRENT_WEB_DATA_SCRAPED = WEB_DATA_DIR / 'current_research_2.html'
 
-HTML_PREDICTIONS_HEADER = ['Day', 'Market'] + PBS_DATA['Plort Name'].tolist()
+MARKET_PRICE_PREDICTOR_HEADER = ['Day', 'Market'] + PBS_DATA['Plort Name'].tolist() # header of output from market price predictor tool on plort market wiki (SR1)
 
 
 class HtmlProcessor():
@@ -35,6 +35,10 @@ class HtmlProcessor():
         export_directory : str, default=REF_DATA_DIR
             Destination of csv output for the csv_export() method 
 
+        seed : float, default=None
+            This is taken from the address bar of the webpage for this html.
+            For example: Input seed=897985.1 from the web address "https://thecybershadow.net/ta/slime-rancher/price-predict/?seed=897985.1" 
+
     Args
     ----
         rrv_k : int, default=10
@@ -48,12 +52,16 @@ class HtmlProcessor():
             html_parser:Literal['html', 'lxml-html', 'lxml-xml', 'html5']='html',
             pickle_filename:str = 'extracted_game_data',
             export_directory:str=REF_DATA_DIR,
+            seed:float=None,
             *,
-            rrv_k:int=10
+            rrv_k:int=10,
             ):
         self.html_file = html_filepath
         self.html_parser = html_parser
         self.export_directory = export_directory
+
+        self.pickle_version:str = dt.datetime.now().strftime('%d%m%Y')
+        self.pickle_file = self.export_directory / f'{pickle_filename}_{self.pickle_version}.pkl'
 
         self.soup = self.create_soup(html_filepath, html_parser)
         
@@ -66,8 +74,7 @@ class HtmlProcessor():
             'recsales': []
         }
         
-        self.pickle_version:str = dt.datetime.now().strftime('%d%m%Y')
-        self.pickle_file = self.export_directory / f'{pickle_filename}_{self.pickle_version}.pkl'
+        self.GAME_SEED = seed
 
     @staticmethod
     def create_soup(filepath:str, parser:Literal['html', 'lxml-html', 'lxml-xml', 'html5']) -> bs: 
@@ -95,7 +102,7 @@ class HtmlProcessor():
         header = self.soup.find('tr')
         header_cols = self._extract_column_names(header, type='header')
         num_features = len(header_cols)
-        missing_cols = [hdr for hdr in HTML_PREDICTIONS_HEADER if hdr not in header_cols]
+        missing_cols = [hdr for hdr in MARKET_PRICE_PREDICTOR_HEADER if hdr not in header_cols] 
 
         random_rows:list[bse.Tag] = random.choices(self._remove_header(), k=rrv_k)
 
@@ -138,13 +145,13 @@ class HtmlProcessor():
         if type == 'header':
             cols = [i.text.strip() for i in row_children_tags if i.text.strip() != '']
             plorts = [i['title'] for i in row_children_tags[2:]]
-            logger.debug(f'cols: {cols} | plorts: {plorts}')
+            # logger.debug(f'cols: {cols} | plorts: {plorts}')
             col_names = cols + plorts
         elif type == 'content':
             col_names = [int(row_children_tags[0].string)]
             for tag in row_children_tags[1:]:
                 title_list = tag['title'].split(' ')
-                identifier = title_list.index('-') # target word (market or plort name) follows this index
+                identifier = title_list.index('-') # target word ("Market" or <plort name>) follows this index
                 col_names.append(title_list[identifier+1].capitalize())
         
         return col_names
@@ -159,7 +166,7 @@ class HtmlProcessor():
                 but does overwrite the entire file (so additional things can be changed if need be).
         
         """
-        logger.info(f'Parser: {self.html_parser} | File: {self.html_file}\n')
+        logger.info(f'Parser: {self.html_parser} | File: {self.html_file}')
 
         for row in self._remove_header():
             self._process_row(row)
@@ -167,19 +174,18 @@ class HtmlProcessor():
         for extracted_data in self.results:
             data = self.results[extracted_data]
             self.results[extracted_data] = pd.DataFrame(data)
-        logger.info('Converted all extracted HTML data into dataframes')
+        # logger.debug('Converted all extracted HTML data into dataframes')
         
         assert self.results['plain'].shape and self.results['perc best'].shape == (999,19), f'Incorrectly stitched dataframe(s). Expected shape (999,19) but got shapes plain: {self.results['plain'].shape} perc best: {self.results['perc best'].shape}'
         
         print('done processing')
-        logger.info(f'Finished processing HTML data from {self.html_file}')
+        logger.info(f'Finished processing HTML data. Results:\n\n{self._log_processing_results()}')
 
         if overwrite_html_file:
             with open(self.html_file, 'wb') as fn:
                 fn.write(self.soup.prettify('utf-8'))
             logger.info(f'Added row tag classes to HTML : {self.html_file}')
            
-
         return
 
     def _process_row(self, row_tag:bse.Tag):
@@ -188,8 +194,8 @@ class HtmlProcessor():
         row_children_tags = self._get_tags_in_row(row_tag)
         
         day = int(row_children_tags[0].string)
-        pvs = [day]
-        pbvs = [day]
+        plain_values = [day]
+        percent_best_values = [day]
 
         # day data already extracted - only look in market/plort columns 
         for cell_tag in row_children_tags[1:]:
@@ -197,25 +203,28 @@ class HtmlProcessor():
 
             col_name = title_list[title_list.index('-')+1].capitalize()
             col_value = [i.strip() for i in cell_tag.contents if not isinstance(i, bse.Tag)][-1]
+            weighted_value = float(col_value[:-1]) / 100 if '%' in col_value else int(col_value) # adjusted for model column, which is represented as a percentage
             col_perc_best = float([i for i in title_list if '%' in i][0][:-1]) / 100
             
-            pvs.append(col_value)
-            pbvs.append(col_perc_best)
+            plain_values.append(weighted_value)
+            percent_best_values.append(col_perc_best)
 
+            # in the html, these are the sell prices with a rectangle around them
+            # indicating those as recommended sales
             if 'class' in cell_tag.attrs:
                 self.results['recsales'].append({
                     'Plort': col_name,
                     'Day': day,
-                    'Value': col_value,
+                    'Value': weighted_value,
                     'Percentage Best': col_perc_best
                 })
             
              
-        self.results['plain'].append(dict(zip(self.validation_metadata['Feature Names'], pvs)))
-        self.results['perc best'].append(dict(zip(self.validation_metadata['Feature Names'], pbvs)))
+        self.results['plain'].append(dict(zip(self.validation_metadata['Feature Names'], plain_values)))
+        self.results['perc best'].append(dict(zip(self.validation_metadata['Feature Names'], percent_best_values)))
 
         # logger.debug(f'Day: {day} | PVS: {pvs} | PBVS: {pbvs}')
-        logger.info(f'Finished processing day {day} data')
+        # logger.debug(f'Finished processing day {day} data')
         return 
 
     def _remove_header(self) -> list[bse.Tag]:
@@ -223,6 +232,17 @@ class HtmlProcessor():
         data = self.soup.find_all('tr')
         data.pop(0)
         return data
+
+    def _log_processing_results(self):
+        """ Logs basic info about output Dataframes """
+        logdata:list[str] = []
+
+        for idx,df in enumerate(self.results):
+            hdr = f'Dataframe [{idx+1}] - "{df}"'
+            info = f'Shape: {str(self.results[df].shape):<15}|{'':>7}dtypes: {str(self.results[df].dtypes.unique().tolist())}'
+            logdata.append(f'\t\t{hdr}\n{info}')
+        
+        return '\n\n'.join(logdata)
 
         
     def pickle_save(self, override:bool=False):
@@ -286,60 +306,13 @@ class HtmlProcessor():
         print(f'done exporting CSVs to {self.export_directory}')
         return
 
-    def view_all_results(self):
+    def view_all_results(self, info:bool=False):
         """ Prints all dataframes """
         for df in self.results:
-            print(self.results[df])
+            if info:
+                self.results[df].info()
+            else:
+                print(self.results[df])
         return 
 
-
-
-# TODO would like to generalize visualization eventually
-# need to figure out what visualizations I would want
-# currently have day x value/stdev per plort
-def plot_rec_data(rec_df:pd.DataFrame, plorts:list[str]=None):
-    assert isinstance(plorts, list), f'Must supply list for plorts, not {type(plorts)}'
-
-    rec_df_c = rec_df.copy()
-    if plorts is None: # separate all plorts into grouped DFs to plot
-        plort_groups = rec_df_c.groupby('plort')
-        plort_group_df:list[dict[Literal['plort', 'df'],pd.DataFrame]] = [{'plort':groups[0], 'df':groups[1].sort_values(by='Day')} for groups in plort_groups]
-
-    else: # separate only the specified plorts into grouped DFs to plot
-        plort_group_df = [{'plort': plort, 'df':rec_df_c[rec_df_c['Plort'] == plort.capitalize()].sort_values(by='Day')} for plort in plorts]
-    
-    # return plort_group_df TODO consider dtype verification/assertion
-        
-    num_plots = len(plort_group_df)
-
-    # Set up the grid for subplots
-    cols = math.ceil(num_plots / 6)  # Number of columns
-    rows = math.ceil(num_plots / cols)  # Number of rows
-    fig, axes = plt.subplots(rows, cols, constrained_layout=True)
-    axes = axes.flatten() if num_plots > 1 else [axes]
-
-    # Plot each group in its own subplot
-    for idx, group_data in enumerate(plort_group_df):
-        ax = axes[idx]
-        group_df = group_data['df']
-        plort_name = group_data['plort']
-        
-        # plot value and stdev
-        ax.plot(group_df['Day'], group_df['Value'], marker='o', linestyle='-', label='Value', color='blue')
-        ax.plot(group_df['Day'], group_df['Percentage Best'], marker='s', linestyle='--', label='Percentage Best', color='orange')
-
-        # titles and labels
-        ax.set_title(plort_name)
-        ax.set_xlabel('Day')
-        ax.set_ylabel('Value / Percentage Best')
-        ax.legend()
-        ax.grid(True)
-
-    # Remove empty subplots if there are any
-    for idx in range(num_plots, len(axes)):
-        fig.delaxes(axes[idx])
-
-    # Show the plot
-    plt.suptitle("Trends by Plort", fontsize=16)
-    plt.show()
 

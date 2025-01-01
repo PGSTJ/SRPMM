@@ -1,5 +1,5 @@
 import Settings
-import Settings.config as sc
+import utils.htmlprocessor as uhp
 import utils.session as us
 import utils.research as ur
 
@@ -8,10 +8,10 @@ import utils.research as ur
 file = Settings.WEB_DATA_DIR / 'current_research_2.html'
 
 if __name__ == "__main__":
-    data_df = sc.PBS_DATA
+    data_df = uhp.PBS_DATA
     print()
 
-    pp = sc.HtmlProcessor(html_parser='html5', html_filepath=file)
+    pp = uhp.HtmlProcessor(html_parser='html5', html_filepath=file)
     # pp.process_html_predictions()  
     # pp.pickle_save()
     
@@ -19,7 +19,7 @@ if __name__ == "__main__":
 
     # pp.pickle_save()
 
-    pp.view_all_results()
+    # pp.view_all_results(info=True)
 
     # print(len(d.find_all('tr')))
 
